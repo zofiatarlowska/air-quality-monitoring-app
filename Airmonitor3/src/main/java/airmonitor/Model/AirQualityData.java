@@ -9,7 +9,7 @@ import java.util.Map;
 public class AirQualityData {
     private double pm25;
     private double pm10;
-    private int aqi; // Indeks od 1 do 5
+    private int aqi;
 
     @JsonProperty("list")
     private void unpackList(List<Map<String, Object>> list) {

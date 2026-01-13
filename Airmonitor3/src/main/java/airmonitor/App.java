@@ -36,9 +36,19 @@ import javafx.scene.control.TableView;
 import javafx.scene.layout.HBox;
 import javafx.scene.control.ScrollPane;
 import javafx.stage.StageStyle;
+import javafx.scene.layout.Region;
+import airmonitor.service.ExportService;
+import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonType;
+import javafx.stage.FileChooser;
+import java.io.File;
+
 
 
 public class App extends Application {
+    private List<airmonitor.Model.AirQualityPoint> lastHistory7d = java.util.List.of();
+    private String lastHistoryCity = "";
+
 
     @Override
     public void start(Stage primaryStage) {
@@ -52,18 +62,16 @@ public class App extends Application {
         Label titleLabel = new Label("MONITOR POGODY I POWIETRZA");
         titleLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: #333;");
 
-        // Pole wyboru miasta
         TextField cityField = new TextField();
         cityField.setFocusTraversable(false);
         cityField.setPromptText("Wpisz miasto...");
         cityField.setMaxWidth(200);
 
-        // FUNKCJONALNOŚĆ 6: Wybór profilu użytkownika
         Label profileLabel = new Label("Twój profil:");
         ComboBox<String> profileBox = new ComboBox<>(FXCollections.observableArrayList(
                 "Standardowy", "Alergik / Astmatyk", "Małe dziecko"
         ));
-        profileBox.setValue("Standardowy"); // domyślna wartość
+        profileBox.setValue("Standardowy");
 
         Button checkButton = new Button("Sprawdź stan");
         checkButton.setStyle("-fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;");
@@ -74,12 +82,11 @@ public class App extends Application {
         Button history7dButton = new Button("Wykres: ostatnie 7 dni (PM2.5)");
         history7dButton.setStyle("-fx-background-color: #6A1B9A; -fx-text-fill: white; -fx-font-weight: bold;");
 
-// Wykres PM2.5
         NumberAxis xAxis = new NumberAxis();
         xAxis.setLabel("Czas");
-        xAxis.setAutoRanging(false);       // my ustawimy ręcznie zakres
-        xAxis.setForceZeroInRange(false);  // nie wciskaj zera jeśli nie trzeba
-        xAxis.setMinorTickVisible(false);  // usuń te drobne kreseczki
+        xAxis.setAutoRanging(false);
+        xAxis.setForceZeroInRange(false);
+        xAxis.setMinorTickVisible(false);
         xAxis.setTickMarkVisible(true);
 
 
@@ -93,12 +100,9 @@ public class App extends Application {
         pmChart.setHorizontalGridLinesVisible(true);
         pmChart.setVerticalGridLinesVisible(false);
 
-
-        // Sekcja wyników
         Label tempLabel = new Label();
         tempLabel.setStyle("-fx-font-size: 32px; -fx-font-weight: bold;");
 
-        // POWRÓT WILGOTNOŚCI
         Label detailsLabel = new Label();
         detailsLabel.setStyle("-fx-font-size: 14px; -fx-text-fill: #666;");
 
@@ -115,21 +119,16 @@ public class App extends Application {
             WeatherApiClient client = new WeatherApiClient();
 
             try {
-                // Pobieranie danych (używamy lat/lon w tle do smogu)
                 airmonitor.Model.WeatherData weather = client.fetchCurrentWeather(city);
                 airmonitor.Model.AirQualityData air = client.fetchAirQuality(weather.getLat(), weather.getLon());
 
-                // 1. Wyświetlanie temperatury
                 tempLabel.setText(String.format("%.1f°C", weather.getTemperature()));
 
-                // 2. Wyświetlanie wilgotności (Przywrócone!)
                 detailsLabel.setText(String.format("Wilgotność: %d%% | Miasto: %s",
                         weather.getHumidity(), weather.getCityName()));
 
-                // 3. Wyświetlanie pyłów
                 airLabel.setText(String.format("PM2.5: %.1f | PM10: %.1f", air.getPm25(), air.getPm10()));
 
-                // 4. LOGIKA REKOMENDACJI (Zależna od profilu)
                 double pmLimit = profile.equals("Standardowy") ? 25.0 : 15.0;
 
                 if (air.getPm25() < pmLimit) {
@@ -158,13 +157,11 @@ public class App extends Application {
             Task<Void> task = new Task<>() {
                 @Override
                 protected Void call() throws Exception {
-                    // 1) Najpierw pobierz współrzędne (z current weather)
                     airmonitor.Model.WeatherData weather = client.fetchCurrentWeather(city);
 
                     long now = Instant.now().getEpochSecond();
                     long start = now - 24 * 3600;
 
-                    // 2) Historia smogu 24h
                     List<AirQualityPoint> points = client.fetchAirQualityHistory(weather.getLat(), weather.getLon(), start, now);
 
                     Platform.runLater(() -> drawPm25ChartSamples(xAxis, pmChart, points, "Ostatnie 24h"));
@@ -193,10 +190,13 @@ public class App extends Application {
                     long now = Instant.now().getEpochSecond();
                     long start = now - 7L * 24 * 3600;
 
-                    // Historia smogu 7 dni (godzinowa), potem zrobimy średnią dzienną
                     List<AirQualityPoint> points = client.fetchAirQualityHistory(weather.getLat(), weather.getLon(), start, now);
 
-                    Platform.runLater(() -> drawPm25ChartDailyAverage(xAxis, pmChart, points, "Ostatnie 7 dni (średnia dzienna)"));
+                    Platform.runLater(() -> {
+                        lastHistory7d = points;
+                        lastHistoryCity = weather.getCityName();
+                        drawPm25ChartDailyAverage(xAxis, pmChart, points, "Ostatnie 7 dni (średnia dzienna)");
+                    });
                     return null;
                 }
             };
@@ -208,7 +208,6 @@ public class App extends Application {
 
             new Thread(task).start();
         });
-        // ===== FUNKCJONALNOŚĆ 5: PORÓWNANIE MIAST (2-3) =====
         Label compareTitle = new Label("Porównanie miast (2–3):");
         compareTitle.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-padding: 10 0 0 0;");
 
@@ -230,38 +229,44 @@ public class App extends Application {
         Button compareButton = new Button("Porównaj");
         compareButton.setStyle("-fx-background-color: #111; -fx-text-fill: white; -fx-font-weight: bold;");
 
-// Tabela porównawcza
         TableView<ComparisonRow> compareTable = new TableView<>();
         compareTable.setMaxWidth(Double.MAX_VALUE);
-        compareTable.setPrefHeight(160);
+        ObservableList<ComparisonRow> compareData = FXCollections.observableArrayList();
+        compareTable.setItems(compareData);
+        compareTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        compareTable.setFixedCellSize(28);
+
+        final double headerHeight = 30;
+
+        compareTable.prefHeightProperty().bind(
+                compareTable.fixedCellSizeProperty()
+                        .multiply(javafx.beans.binding.Bindings.size(compareTable.getItems()))
+                        .add(headerHeight)
+        );
+
+        compareTable.setMinHeight(Region.USE_PREF_SIZE);
+        compareTable.setMaxHeight(Region.USE_PREF_SIZE);
 
         TableColumn<ComparisonRow, String> colCity = new TableColumn<>("Miasto");
         colCity.setCellValueFactory(data -> new SimpleObjectProperty<>(data.getValue().getCity()));
-        colCity.setPrefWidth(140);
 
         TableColumn<ComparisonRow, Double> colTemp = new TableColumn<>("Temp (°C)");
         colTemp.setCellValueFactory(data -> new SimpleObjectProperty<>(data.getValue().getTemperature()));
-        colTemp.setPrefWidth(90);
 
         TableColumn<ComparisonRow, Integer> colHum = new TableColumn<>("Wilg (%)");
         colHum.setCellValueFactory(data -> new SimpleObjectProperty<>(data.getValue().getHumidity()));
-        colHum.setPrefWidth(80);
 
         TableColumn<ComparisonRow, Integer> colAqi = new TableColumn<>("AQI (1–5)");
         colAqi.setCellValueFactory(data -> new SimpleObjectProperty<>(data.getValue().getAqi()));
-        colAqi.setPrefWidth(90);
 
         TableColumn<ComparisonRow, Double> colPm25 = new TableColumn<>("PM2.5");
         colPm25.setCellValueFactory(data -> new SimpleObjectProperty<>(data.getValue().getPm25()));
-        colPm25.setPrefWidth(80);
 
         TableColumn<ComparisonRow, Double> colPm10 = new TableColumn<>("PM10");
         colPm10.setCellValueFactory(data -> new SimpleObjectProperty<>(data.getValue().getPm10()));
-        colPm10.setPrefWidth(80);
 
         compareTable.getColumns().addAll(colCity, colTemp, colHum, colAqi, colPm25, colPm10);
 
-// Wykres (BarChart) PM2.5
         CategoryAxis bx = new CategoryAxis();
         bx.setLabel("Miasto");
 
@@ -275,7 +280,6 @@ public class App extends Application {
         pm25Bar.setPrefHeight(260);
         pm25Bar.setMaxWidth(Double.MAX_VALUE);
 
-// Obsługa przycisku "Porównaj"
         compareButton.setOnAction(ev -> {
             List<String> cities = new ArrayList<>();
             if (!cityField1.getText().isBlank()) cities.add(cityField1.getText().trim());
@@ -283,10 +287,10 @@ public class App extends Application {
             if (!cityField3.getText().isBlank()) cities.add(cityField3.getText().trim());
 
             if (cities.size() < 2) {
-                // prosta informacja w tabeli
-                compareTable.setItems(FXCollections.observableArrayList(
-                        new ComparisonRow("Wpisz min. 2 miasta", 0, 0, 0, 0, 0)
-                ));
+                compareData.setAll(
+                        new ComparisonRow("Błąd pobierania danych", 0, 0, 0, 0, 0)
+                );
+
                 pm25Bar.getData().clear();
                 return;
             }
@@ -315,10 +319,9 @@ public class App extends Application {
 
             task.setOnSucceeded(done -> {
                 List<ComparisonRow> rows = task.getValue();
-                ObservableList<ComparisonRow> data = FXCollections.observableArrayList(rows);
-                compareTable.setItems(data);
+                compareData.setAll(rows);
+                compareTable.refresh();
 
-                // wykres PM2.5
                 pm25Bar.getData().clear();
                 XYChart.Series<String, Number> s = new XYChart.Series<>();
                 for (ComparisonRow r : rows) {
@@ -326,19 +329,85 @@ public class App extends Application {
                 }
                 pm25Bar.getData().add(s);
             });
-
             task.setOnFailed(f -> {
-                compareTable.setItems(FXCollections.observableArrayList(
+                compareData.setAll(
                         new ComparisonRow("Błąd pobierania danych", 0, 0, 0, 0, 0)
-                ));
+                );
                 pm25Bar.getData().clear();
             });
 
             new Thread(task).start();
         });
+        Label exportTitle = new Label("Eksport danych:");
+        exportTitle.setStyle("-fx-font-size: 14px; -fx-font-weight: bold; -fx-padding: 10 0 0 0;");
+
+        Button exportCsvBtn = new Button("Eksport CSV (ostatnie 7 dni)");
+        exportCsvBtn.setStyle("-fx-background-color: #455A64; -fx-text-fill: white; -fx-font-weight: bold;");
+
+        Button exportPngBtn = new Button("Eksport PNG (wykres)");
+        exportPngBtn.setStyle("-fx-background-color: #00897B; -fx-text-fill: white; -fx-font-weight: bold;");
+
+        Button exportPdfBtn = new Button("Eksport PDF (raport 7 dni)");
+        exportPdfBtn.setStyle("-fx-background-color: #5D4037; -fx-text-fill: white; -fx-font-weight: bold;");
+
+        exportCsvBtn.setOnAction(e -> {
+            if (lastHistory7d.isEmpty()) {
+                new Alert(Alert.AlertType.INFORMATION, "Najpierw kliknij: Wykres: ostatnie 7 dni.", ButtonType.OK).showAndWait();
+                return;
+            }
+            FileChooser fc = new FileChooser();
+            fc.setTitle("Zapisz CSV");
+            fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("CSV (*.csv)", "*.csv"));
+            fc.setInitialFileName("raport_7dni.csv");
+            File file = fc.showSaveDialog(primaryStage);
+            if (file == null) return;
+
+            try {
+                ExportService.exportAirQualityCsv(lastHistory7d, file.toPath());
+                new Alert(Alert.AlertType.INFORMATION, "Zapisano CSV: " + file.getName(), ButtonType.OK).showAndWait();
+            } catch (Exception ex) {
+                new Alert(Alert.AlertType.ERROR, "Błąd zapisu CSV: " + ex.getMessage(), ButtonType.OK).showAndWait();
+            }
+        });
+
+        exportPngBtn.setOnAction(e -> {
+            FileChooser fc = new FileChooser();
+            fc.setTitle("Zapisz PNG");
+            fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("PNG (*.png)", "*.png"));
+            fc.setInitialFileName("wykres.png");
+            File file = fc.showSaveDialog(primaryStage);
+            if (file == null) return;
+
+            try {
+                ExportService.exportNodeToPng(pmChart, file);
+                new Alert(Alert.AlertType.INFORMATION, "Zapisano PNG: " + file.getName(), ButtonType.OK).showAndWait();
+            } catch (Exception ex) {
+                new Alert(Alert.AlertType.ERROR, "Błąd zapisu PNG: " + ex.getMessage(), ButtonType.OK).showAndWait();
+            }
+        });
+
+        exportPdfBtn.setOnAction(e -> {
+            if (lastHistory7d.isEmpty()) {
+                new Alert(Alert.AlertType.INFORMATION, "Najpierw kliknij: Wykres: ostatnie 7 dni.", ButtonType.OK).showAndWait();
+                return;
+            }
+            FileChooser fc = new FileChooser();
+            fc.setTitle("Zapisz PDF");
+            fc.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF (*.pdf)", "*.pdf"));
+            fc.setInitialFileName("raport_7dni.pdf");
+            File file = fc.showSaveDialog(primaryStage);
+            if (file == null) return;
+
+            try {
+                ExportService.exportWeeklyPdfReport(lastHistoryCity.isBlank() ? "Nieznane" : lastHistoryCity, lastHistory7d, file);
+                new Alert(Alert.AlertType.INFORMATION, "Zapisano PDF: " + file.getName(), ButtonType.OK).showAndWait();
+            } catch (Exception ex) {
+                new Alert(Alert.AlertType.ERROR, "Błąd zapisu PDF: " + ex.getMessage(), ButtonType.OK).showAndWait();
+            }
+        });
 
 
-        // Dodawanie wszystkiego do widoku
+
         root.getChildren().addAll(
                 titleLabel,
                 cityField,
@@ -353,11 +422,15 @@ public class App extends Application {
                 citiesBox,
                 compareButton,
                 compareTable,
-                pm25Bar
+                pm25Bar,
+                exportTitle,
+                exportCsvBtn,
+                exportPngBtn,
+                exportPdfBtn
         );
 
         ScrollPane scrollPane = new ScrollPane(root);
-        scrollPane.setPadding(new Insets(60, 0, 0, 0));
+        scrollPane.setPadding(new Insets(40, 0, 0, 20));
         scrollPane.setVvalue(0.0);
         scrollPane.setHvalue(0.0);
         scrollPane.setFitToWidth(true);
@@ -367,13 +440,21 @@ public class App extends Application {
 
         Scene scene = new Scene(scrollPane, 1000, 900);
         primaryStage.setScene(scene);
-        Platform.runLater(() -> scrollPane.setVvalue(0.0));
+
         primaryStage.show();
+
         Platform.runLater(() -> {
+            primaryStage.sizeToScene();
+            primaryStage.centerOnScreen();
+            primaryStage.setMaximized(true);
+            scrollPane.applyCss();
+            scrollPane.layout();
             scrollPane.setVvalue(0.0);
             scrollPane.setHvalue(0.0);
-            root.requestFocus(); // zabiera focus z TextField
+
+            root.requestFocus();
         });
+
 
     }
 
@@ -394,19 +475,15 @@ public class App extends Application {
         int n = points.size();
         if (n == 0) return;
 
-        // 1) Zakres osi X: dokładnie 0..n-1
         xAxis.setAutoRanging(false);
         xAxis.setLowerBound(0);
         xAxis.setUpperBound(n - 1);
 
-        // 2) Chcemy ~8 etykiet na osi
         int labelCount = 8;
         int step = Math.max(1, (n - 1) / labelCount);
 
-        // 3) TickUnit = step (czyli skoki co kilka punktów)
         xAxis.setTickUnit(step);
 
-        // 4) Format etykiet: pokaż HH:mm tylko na tickach, reszta pusta
         xAxis.setTickLabelFormatter(new javafx.util.StringConverter<Number>() {
             @Override
             public String toString(Number value) {
@@ -418,7 +495,7 @@ public class App extends Application {
                         .atZone(java.time.ZoneId.systemDefault())
                         .toLocalTime()
                         .toString()
-                        .substring(0, 5); // HH:mm
+                        .substring(0, 5);
             }
 
             @Override
@@ -427,7 +504,6 @@ public class App extends Application {
             }
         });
 
-        // Dane
         XYChart.Series<Number, Number> series = new XYChart.Series<>();
         for (int i = 0; i < n; i++) {
             series.getData().add(new XYChart.Data<>(i, points.get(i).getPm25()));
@@ -441,18 +517,16 @@ public class App extends Application {
 
     private void drawPm25ChartDailyAverage(NumberAxis xAxis, LineChart<Number, Number> chart,
                                            List<AirQualityPoint> points, String title) {
-        // grupowanie po dacie i liczenie średniej
         Map<LocalDate, double[]> acc = new TreeMap<>();
         ZoneId zone = ZoneId.systemDefault();
 
         for (AirQualityPoint p : points) {
             LocalDate date = Instant.ofEpochSecond(p.getTimestamp()).atZone(zone).toLocalDate();
-            acc.putIfAbsent(date, new double[]{0.0, 0.0}); // sum, count
+            acc.putIfAbsent(date, new double[]{0.0, 0.0});
             acc.get(date)[0] += p.getPm25();
             acc.get(date)[1] += 1.0;
         }
 
-        // przygotuj listę dni + wartości
         List<LocalDate> days = new ArrayList<>(acc.keySet());
         List<Double> values = new ArrayList<>(days.size());
         for (LocalDate d : days) {
@@ -466,12 +540,11 @@ public class App extends Application {
         int n = days.size();
         if (n == 0) return;
 
-        // oś X: dokładnie 0..n-1, równo rozłożone ticki
         xAxis.setAutoRanging(false);
         xAxis.setLowerBound(0);
         xAxis.setUpperBound(n - 1);
 
-        int labelCount = Math.min(7, n);          // max 7 etykiet (bo 7 dni)
+        int labelCount = Math.min(7, n);
         int step = Math.max(1, (n - 1) / labelCount);
         xAxis.setTickUnit(step);
 
@@ -491,7 +564,6 @@ public class App extends Application {
             }
         });
 
-        // dane do wykresu
         XYChart.Series<Number, Number> series = new XYChart.Series<>();
         for (int i = 0; i < n; i++) {
             series.getData().add(new XYChart.Data<>(i, values.get(i)));

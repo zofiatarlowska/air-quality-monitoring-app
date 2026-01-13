@@ -16,7 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class WeatherApiClient {
-    private final String API_KEY = "f33573643419fc120e247e24bab2cbcc"; // Wklej tutaj swój klucz
+    private final String API_KEY = "f33573643419fc120e247e24bab2cbcc";
     private final HttpClient client = HttpClient.newHttpClient();
     private final ObjectMapper mapper = new ObjectMapper();
 
