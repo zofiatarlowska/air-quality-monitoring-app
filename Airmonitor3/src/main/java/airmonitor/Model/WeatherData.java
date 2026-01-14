@@ -32,6 +32,17 @@ public class WeatherData {
         this.lon = coord.get("lon");
     }
 
+    public double getTemperatureInUnit(String unit) {
+        switch (unit) {
+            case "Kelvin (K)":
+                return temperature + 273.15;
+            case "Fahrenheit (°F)":
+                return (temperature * 9/5) + 32;
+            default: // Celsius
+                return temperature;
+        }
+    }
+
     public double getLat() { return lat; }
     public double getLon() { return lon; }
 }

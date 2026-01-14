@@ -65,7 +65,7 @@ public class ExportService {
         ImageIO.write(SwingFXUtils.fromFXImage(image, null), "png", file);
     }
 
-    public static void exportWeeklyPdfReport(String city, List<AirQualityPoint> points, File file) throws Exception {
+    public static void exportWeeklyPdfReport(String city, List<AirQualityPoint> points, String tempInfo, File file) throws Exception {
         double avgPm25 = points.stream().mapToDouble(AirQualityPoint::getPm25).average().orElse(0);
         double maxPm25 = points.stream().mapToDouble(AirQualityPoint::getPm25).max().orElse(0);
         double avgPm10 = points.stream().mapToDouble(AirQualityPoint::getPm10).average().orElse(0);
@@ -82,7 +82,7 @@ public class ExportService {
                 cs.beginText();
                 cs.setFont(PDType1Font.HELVETICA_BOLD, 16);
                 cs.newLineAtOffset(50, 780);
-                cs.showText("Raport jakosci powietrza (7 dni)");
+                cs.showText("Raport jakosci powietrza i pogody");
                 cs.endText();
 
                 cs.beginText();
@@ -90,15 +90,15 @@ public class ExportService {
                 cs.newLineAtOffset(50, 740);
 
                 cs.showText("Miasto: " + city); cs.newLineAtOffset(0, -18);
-                cs.showText("Zakres: " + from + "  ->  " + to); cs.newLineAtOffset(0, -18);
+                cs.showText("Aktualna temperatura: " + tempInfo); cs.newLineAtOffset(0, -18); // NOWA LINIA
+                cs.showText("Zakres danych: " + from + "  ->  " + to); cs.newLineAtOffset(0, -18);
                 cs.showText(String.format("PM2.5: srednia = %.2f, max = %.2f", avgPm25, maxPm25)); cs.newLineAtOffset(0, -18);
                 cs.showText(String.format("PM10 : srednia = %.2f, max = %.2f", avgPm10, maxPm10)); cs.newLineAtOffset(0, -18);
 
                 cs.newLineAtOffset(0, -18);
-                cs.showText("Uwaga: raport jest uproszczony (tekst).");
+                cs.showText("Wygenerowano z aplikacji AirMonitor.");
                 cs.endText();
             }
-
             doc.save(file);
         }
     }
