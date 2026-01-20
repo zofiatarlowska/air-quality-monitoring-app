@@ -2,6 +2,8 @@ package airmonitor.Model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+
+import java.util.List;
 import java.util.Map;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -11,14 +13,29 @@ public class WeatherData {
     private int humidity;
     private double lat;
     private double lon;
+    private String iconCode;
 
     @JsonProperty("name")
     public void setCityName(String cityName) { this.cityName = cityName; }
 
     @JsonProperty("main")
     private void unpackMain(Map<String, Object> main) {
-        this.temperature = (double) main.get("temp");
-        this.humidity = (int) main.get("humidity");
+
+        this.temperature = ((Number) main.get("temp")).doubleValue();
+        this.humidity = ((Number) main.get("humidity")).intValue();
+    }
+
+
+    @JsonProperty("weather")
+    private void unpackWeather(List<Map<String, Object>> weather) {
+        if (weather != null && !weather.isEmpty()) {
+            this.iconCode = (String) weather.get(0).get("icon");
+        }
+    }
+
+    // Metoda generująca link do obrazka ikony z serwerów OpenWeatherMap
+    public String getIconUrl() {
+        return "https://openweathermap.org/img/wn/" + iconCode + "@2x.png";
     }
 
     public String getCityName() { return cityName; }

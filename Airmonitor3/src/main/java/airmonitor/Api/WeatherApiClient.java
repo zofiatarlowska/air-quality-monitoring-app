@@ -1,6 +1,7 @@
 package airmonitor.Api;
 
 import airmonitor.Model.AirQualityData;
+import airmonitor.Model.ForecastData;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import airmonitor.Model.WeatherData;
 
@@ -48,6 +49,29 @@ public class WeatherApiClient {
             return mapper.readValue(response.body(), AirQualityData.class);
         } else {
             throw new RuntimeException("Błąd pobierania smogu");
+        }
+    }
+
+    public String fetchCityByIp() throws Exception {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("http://ip-api.com/json"))
+                .build();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        JsonNode node = mapper.readTree(response.body());
+        return node.get("city").asText();
+    }
+
+    public ForecastData fetchForecast(String city) throws Exception {
+        String encodedCity = java.net.URLEncoder.encode(city, java.nio.charset.StandardCharsets.UTF_8);
+        String url = String.format("https://api.openweathermap.org/data/2.5/forecast?q=%s&appid=%s&units=metric", encodedCity, API_KEY);
+
+        HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).build();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() == 200) {
+            return mapper.readValue(response.body(), ForecastData.class);
+        } else {
+            throw new RuntimeException("Błąd prognozy: " + response.statusCode());
         }
     }
 
