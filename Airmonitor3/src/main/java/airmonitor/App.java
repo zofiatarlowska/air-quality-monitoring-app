@@ -273,6 +273,9 @@ public class App extends Application {
     private void handleCheck(TextField cityF, ComboBox<String> profB, ComboBox<String> unitB, Label tL, Label dL, Label aL, Label rL) {
         String city = cityF.getText();
         String selectedUnit = (unitB == null) ? "Celsius (°C)" : unitB.getValue();
+        // Pobieramy profil (jeśli profB jest null, np. przy autostarcie, dajemy Standardowy)
+        String profile = (profB == null) ? "Standardowy" : profB.getValue();
+
         WeatherApiClient client = new WeatherApiClient();
 
         Task<Void> combinedTask = new Task<>() {
@@ -282,15 +285,54 @@ public class App extends Application {
                 var forecast = client.fetchForecast(city);
 
                 Platform.runLater(() -> {
+                    // Ikona i temperatura
                     weatherIconView.setImage(new Image(weather.getIconUrl()));
                     double displayTemp = weather.getTemperatureInUnit(selectedUnit);
                     String unitSymbol = selectedUnit.substring(selectedUnit.indexOf("(") + 1, selectedUnit.indexOf(")"));
 
                     if(tL != null) tL.setText(String.format("%.1f %s", displayTemp, unitSymbol));
                     if(dL != null) dL.setText(String.format("Wilgotność: %d%% | Miasto: %s", weather.getHumidity(), weather.getCityName()));
-                    if(aL != null) aL.setText(String.format("PM2.5: %.1f | PM10: %.1f", air.getPm25(), air.getPm10()));
 
-                    // Obsługa prognozy
+                    // --- LOGIKA PORAD I KOLORÓW (Wersja "Bardziej Ludzka") ---
+                    double pm25 = air.getPm25();
+                    String advice;
+                    String color;
+
+                    boolean isSensitive = profile.equals("Alergik / Astmatyk") || profile.equals("Małe dziecko");
+                    double thresholdSafe = isSensitive ? 12.0 : 20.0;
+                    double thresholdWarning = isSensitive ? 20.0 : 35.0;
+
+                    if (pm25 < thresholdSafe) {
+                        advice = "🌿 Jest super! Idealna pora na spacer lub bieganie. Powietrze dla grupy '" + profile + "' jest dziś wzorowe.";
+                        color = "#2e7d32";
+                    } else if (pm25 < thresholdWarning) {
+                        if (isSensitive) {
+                            advice = "☁️ Nie jest idealnie. Jeśli jesteś wrażliwy, lepiej skróć dzisiejszy spacer.";
+                        } else {
+                            advice = "🏃 Można wychodzić, ale bez bicia rekordów. Powietrze jest takie sobie, poczujesz to przy mocniejszym treningu.";
+                        }
+                        color = "#f57f17";
+                    } else {
+                        // Alarm powyżej normy
+                        if (isSensitive) {
+                            advice = "😷 Uwaga! Fatalna jakość powietrza. Jako " + profile + " lepiej dziś odpuść wyjścia i nie otwieraj okien.";
+                        } else {
+                            advice = "🚫 Smog daje o sobie znać. Lepiej zostać w domu, wietrzenie mieszkania to teraz słaby pomysł.";
+                        }
+                        color = "#c62828";
+                    }
+
+                    if(aL != null) {
+                        aL.setText(String.format("PM2.5: %.1f | PM10: %.1f", air.getPm25(), air.getPm10()));
+                        aL.setStyle("-fx-font-weight: bold; -fx-text-fill: " + color + ";");
+                    }
+
+                    if(rL != null) {
+                        rL.setText(advice);
+                        rL.setStyle("-fx-font-style: italic; -fx-font-weight: bold; -fx-text-fill: " + color + ";");
+                    }
+
+                    // Obsługa prognozy (bez zmian)
                     forecastContainer.getChildren().clear();
                     for (int i = 0; i < forecast.getForecastList().size(); i += 8) {
                         var item = forecast.getForecastList().get(i);
