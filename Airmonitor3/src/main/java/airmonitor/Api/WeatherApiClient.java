@@ -21,8 +21,8 @@ public class WeatherApiClient {
     private final HttpClient client = HttpClient.newHttpClient();
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public WeatherData fetchCurrentWeather(String city) throws Exception {
 
+    public WeatherData fetchCurrentWeather(String city) throws Exception {
         String encodedCity = java.net.URLEncoder.encode(city, java.nio.charset.StandardCharsets.UTF_8);
         String url = String.format("https://api.openweathermap.org/data/2.5/weather?q=%s&appid=%s&units=metric", encodedCity, API_KEY);
 

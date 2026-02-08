@@ -1,0 +1,86 @@
+.root {
+    -fx-background-color: #121212;
+}
+
+.app-background {
+    -fx-background-color: #121212;
+}
+
+.scroll-pane {
+    -fx-background: #121212;
+    -fx-background-color: #121212;
+}
+
+.scroll-pane > .viewport {
+    -fx-background-color: #121212;
+}
+/* Teksty ogólne */
+.label {
+    -fx-text-fill: #e8e8e8;
+}
+
+/* Tytuł */
+.app-title {
+    -fx-text-fill: #f5f5f5;
+}
+
+/* CheckBox "Ciemny tryb" */
+.mode-toggle {
+    -fx-text-fill: #f0f0f0;
+    -fx-font-weight: bold;
+}
+
+/* "ptaszek" i obramowanie checkboxa */
+.check-box .box {
+    -fx-background-color: #2a2a2a;
+    -fx-border-color: #6b6b6b;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+}
+.check-box:selected .mark {
+    -fx-background-color: #f0f0f0;
+}
+
+/* ComboBox (zamknięty) */
+.combo-box, .combo-box-base {
+    -fx-background-color: #2a2a2a;
+    -fx-border-color: #6b6b6b;
+    -fx-border-radius: 8;
+    -fx-background-radius: 8;
+}
+
+/* Tekst wybranej wartości w ComboBox */
+.combo-box .list-cell {
+    -fx-text-fill: #f0f0f0;
+    -fx-background-color: transparent;
+}
+
+/* Lista po rozwinięciu */
+.combo-box-popup .list-view {
+    -fx-background-color: #2a2a2a;
+}
+.combo-box-popup .list-view .list-cell {
+    -fx-background-color: #2a2a2a;
+    -fx-text-fill: #f0f0f0;
+}
+.combo-box-popup .list-view .list-cell:hover {
+    -fx-background-color: #3a3a3a;
+}
+
+/* Strzałka w comboboxie */
+.combo-box .arrow-button {
+    -fx-background-color: transparent;
+}
+.combo-box .arrow {
+    -fx-background-color: #f0f0f0;
+}
+.temp-value {
+    -fx-text-fill: #f5f5f5;
+}
+.list-view {
+    -fx-fit-to-height: true;
+}
+
+.list-view .scroll-bar:vertical {
+    -fx-pref-width: 12px;
+}

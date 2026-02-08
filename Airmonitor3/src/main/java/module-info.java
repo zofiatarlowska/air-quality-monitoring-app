@@ -7,6 +7,7 @@ module Airmonitor3 {
     requires javafx.swing;
     requires java.desktop;
     requires org.apache.pdfbox;
+    requires java.prefs;
 
 
     opens airmonitor to javafx.graphics, javafx.fxml;

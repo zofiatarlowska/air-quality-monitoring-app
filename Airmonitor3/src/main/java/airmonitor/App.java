@@ -1,40 +1,47 @@
 package airmonitor;
 
-import javafx.application.Application;
-import javafx.collections.FXCollections;
-import javafx.geometry.Insets;
-import javafx.geometry.Pos;
-import javafx.scene.Scene;
-import javafx.scene.control.*;
-import javafx.scene.layout.*;
-import javafx.stage.Stage;
 import airmonitor.Api.WeatherApiClient;
 import airmonitor.Model.AirQualityPoint;
-import airmonitor.Model.ForecastData;
+import airmonitor.Model.ComparisonRow;
+import airmonitor.service.CityHistoryService;
+import airmonitor.service.ExportService;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
+import javafx.application.Application;
 import javafx.application.Platform;
+import javafx.beans.binding.Bindings;
+import javafx.beans.property.SimpleObjectProperty;
+import javafx.collections.FXCollections;
 import javafx.concurrent.Task;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.geometry.Rectangle2D;
+import javafx.scene.Scene;
 import javafx.scene.chart.LineChart;
 import javafx.scene.chart.NumberAxis;
 import javafx.scene.chart.XYChart;
+import javafx.scene.control.*;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.VBox;
+import javafx.stage.FileChooser;
+import javafx.stage.Popup;
+import javafx.stage.Screen;
+import javafx.stage.Stage;
+import javafx.util.Duration;
+import java.io.File;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import airmonitor.Model.ComparisonRow;
-import javafx.beans.property.SimpleObjectProperty;
-import javafx.collections.ObservableList;
-import airmonitor.service.ExportService;
-import java.io.File;
-import javafx.stage.FileChooser;
-import javafx.animation.KeyFrame;
-import javafx.animation.Timeline;
-import javafx.util.Duration;
-import javafx.scene.image.Image;
-import javafx.scene.image.ImageView;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import javafx.scene.layout.StackPane;
+import javafx.beans.value.ChangeListener;
 
 public class App extends Application {
     private List<airmonitor.Model.AirQualityPoint> lastHistory7d = java.util.List.of();
@@ -45,31 +52,120 @@ public class App extends Application {
     private final String ACCENT = "#2196F3";
     private final String SUCCESS = "#4CAF50";
     private final String INFO = "#2980b9";
-    private final String CARD_BG = "-fx-background-color: white; -fx-background-radius: 12; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.1), 10, 0, 0, 5);";
 
     private TableColumn<ComparisonRow, Double> colTemp;
     private final ImageView weatherIconView = new ImageView();
-    private final HBox forecastContainer = new HBox(15); // Kontener na prognozę 5-dniową
+    private final HBox forecastContainer = new HBox(15);
     private Timeline autoRefresh;
+    private static final int HISTORY_LIMIT = 6;
+    private Popup toastPopup;
+    private String lastToastKey = "";
+    private Stage primaryStageRef;
+    private TextField cityField;
+    private ComboBox<String> profileBox;
+    private ComboBox<String> unitBox;
+    private Label tempLabel, detailsLabel, airLabel, recommendationLabel;
+    private NumberAxis xAxis;
+    private LineChart<Number, Number> pmChart;
+    private CityHistoryService cityHistoryService;
+
+    private enum TempUnit {
+        C("Celsius (°C)", "°C"),
+        K("Kelvin (K)", "K"),
+        F("Fahrenheit (°F)", "°F");
+
+        final String label;
+        final String symbol;
+
+        TempUnit(String label, String symbol) {
+            this.label = label;
+            this.symbol = symbol;
+        }
+
+        static TempUnit fromLabel(String label) {
+            for (TempUnit u : values()) {
+                if (u.label.equals(label)) return u;
+            }
+            return C;
+        }
+    }
+    private boolean isSensitiveProfile(String profile) {
+        return "Alergik / Astmatyk".equals(profile) || "Małe dziecko".equals(profile);
+    }
+
+    private record Thresholds(double safe, double warning, double danger) {}
+
+    private Thresholds thresholdsFor(String profile) {
+        boolean s = isSensitiveProfile(profile);
+        return new Thresholds(
+                s ? 12.0 : 20.0,
+                s ? 20.0 : 35.0,
+                s ? 35.0 : 55.0
+        );
+    }
+
+    private record Advice(String text, String color, String level) {}
+
+    private Advice buildAdvice(String profile, double pm25) {
+        Thresholds t = thresholdsFor(profile);
+        boolean sensitive = isSensitiveProfile(profile);
+
+        if (pm25 < t.safe()) {
+            return new Advice(
+                    "🌿 Jest super! Idealna pora na spacer lub bieganie. Powietrze dla grupy '" + profile + "' jest dziś wzorowe.",
+                    "#2e7d32",
+                    "info"
+            );
+        } else if (pm25 < t.warning()) {
+            String msg = sensitive
+                    ? "☁️ Nie jest idealnie. Jeśli jesteś wrażliwy, lepiej skróć dzisiejszy spacer."
+                    : "🏃 Można wychodzić, ale bez bicia rekordów. Powietrze jest takie sobie, poczujesz to przy mocniejszym treningu.";
+            return new Advice(msg, "#f57f17", "warn");
+        } else {
+            String msg = sensitive
+                    ? "😷 Uwaga! Fatalna jakość powietrza. Jako " + profile + " lepiej dziś odpuść wyjścia i nie otwieraj okien."
+                    : "🚫 Smog daje o sobie znać. Lepiej zostać w domu, wietrzenie mieszkania to teraz słaby pomysł.";
+            return new Advice(msg, "#c62828", "error");
+        }
+    }
+
 
     @Override
     public void start(Stage primaryStage) {
+        this.primaryStageRef = primaryStage;
         VBox mainContainer = new VBox(25);
+        mainContainer.getStyleClass().add("app-background");
         mainContainer.setPadding(new Insets(30));
         mainContainer.setAlignment(Pos.TOP_CENTER);
-        mainContainer.setStyle("-fx-background-color: #f0f2f5;");
 
         Label titleLabel = new Label("MONITOR POGODY I POWIETRZA");
-        titleLabel.setStyle("-fx-font-size: 26px; -fx-font-weight: bold; -fx-text-fill: " + PRIMARY + ";");
+        titleLabel.setStyle("-fx-font-size: 26px; -fx-font-weight: bold;");
+        titleLabel.getStyleClass().add("app-title");
+        CheckBox darkToggle = new CheckBox("🌙 Ciemny tryb");
+        darkToggle.getStyleClass().add("mode-toggle");
 
-        // --- PANEL WYSZUKIWANIA ---
+        // PANEL WYSZUKIWANIA
         VBox searchCard = new VBox(15);
-        searchCard.setStyle(CARD_BG);
+        searchCard.getStyleClass().add("card");
         searchCard.setPadding(new Insets(20));
         searchCard.setAlignment(Pos.CENTER);
         searchCard.setMaxWidth(700);
 
-        TextField cityField = new TextField();
+        cityField = new TextField();
+        cityHistoryService = new CityHistoryService(App.class, HISTORY_LIMIT);
+        ListView<String> historyList = new ListView<>(cityHistoryService.items());
+        historyList.visibleProperty().bind(Bindings.isEmpty(historyList.getItems()).not());
+        historyList.managedProperty().bind(Bindings.isEmpty(historyList.getItems()).not());
+        int visibleRows = 3;
+
+        historyList.setFixedCellSize(32);
+        historyList.setPrefHeight(visibleRows * historyList.getFixedCellSize() + 2);
+        historyList.setMaxHeight(visibleRows * historyList.getFixedCellSize() + 2);
+
+        historyList.setMaxWidth(350);
+
+        historyList.setStyle("-fx-background-radius: 12; -fx-border-radius: 12;");
+
         cityField.setPromptText("Wpisz miasto...");
         cityField.setStyle("-fx-background-radius: 20; -fx-padding: 10 15; -fx-border-color: #dcdde1; -fx-border-radius: 20;");
         cityField.setMaxWidth(350);
@@ -85,29 +181,40 @@ public class App extends Application {
             };
             locTask.setOnSucceeded(ev -> {
                 cityField.setText(locTask.getValue());
-                handleCheck(cityField, null, null, null, null, null, null); // Wyzwalacz sprawdzania
+                handleCheck();
             });
             new Thread(locTask).start();
         });
 
         HBox settingsBox = new HBox(20);
         settingsBox.setAlignment(Pos.CENTER);
-        ComboBox<String> profileBox = new ComboBox<>(FXCollections.observableArrayList("Standardowy", "Alergik / Astmatyk", "Małe dziecko"));
+        profileBox = new ComboBox<>(FXCollections.observableArrayList("Standardowy", "Alergik / Astmatyk", "Małe dziecko"));
         profileBox.setValue("Standardowy");
-        ComboBox<String> unitBox = new ComboBox<>(FXCollections.observableArrayList("Celsius (°C)", "Kelvin (K)", "Fahrenheit (°F)"));
+        unitBox = new ComboBox<>(FXCollections.observableArrayList("Celsius (°C)", "Kelvin (K)", "Fahrenheit (°F)"));
         unitBox.setValue("Celsius (°C)");
         settingsBox.getChildren().addAll(new Label("Profil:"), profileBox, new Label("Jednostka:"), unitBox);
 
         Button checkButton = new Button("SPRAWDŹ STAN");
         styleButton(checkButton, ACCENT);
         checkButton.setMinWidth(220);
+        historyList.setOnMouseClicked(e -> {
+            String selected = historyList.getSelectionModel().getSelectedItem();
+            if (selected != null) {
+                cityField.setText(selected);
+                checkButton.fire();
+            }
+        });
 
-        searchCard.getChildren().addAll(new HBox(10, cityField, locBtn), settingsBox, checkButton);
-        ((HBox)searchCard.getChildren().get(0)).setAlignment(Pos.CENTER);
+
+        VBox cityBox = new VBox(8, new HBox(10, cityField, locBtn), historyList);
+        cityBox.setAlignment(Pos.CENTER);
+
+        searchCard.getChildren().addAll(cityBox, settingsBox, checkButton);
+        ((HBox)cityBox.getChildren().get(0)).setAlignment(Pos.CENTER);
 
 
         VBox resultCard = new VBox(15);
-        resultCard.setStyle(CARD_BG);
+        resultCard.getStyleClass().add("card");
         resultCard.setPadding(new Insets(25));
         resultCard.setAlignment(Pos.CENTER);
         resultCard.setMaxWidth(700);
@@ -117,16 +224,32 @@ public class App extends Application {
         weatherIconView.setFitHeight(80);
         weatherIconView.setFitWidth(80);
 
-        Label tempLabel = new Label();
-        tempLabel.setStyle("-fx-font-size: 52px; -fx-font-weight: bold; -fx-text-fill: " + PRIMARY + ";");
+        tempLabel = new Label();
+        tempLabel.setStyle("-fx-font-size: 52px; -fx-font-weight: bold;");
+        tempLabel.getStyleClass().add("temp-value");
 
-        HBox tempIconBox = new HBox(15, weatherIconView, tempLabel);
+        StackPane iconBadge = new StackPane(weatherIconView);
+        iconBadge.setMinSize(90, 90);
+        iconBadge.setPrefSize(90, 90);
+        iconBadge.setMaxSize(90, 90);
+        iconBadge.setStyle(
+                "-fx-background-color: rgba(255,255,255,0.85);" +
+                        "-fx-background-radius: 45;" +
+                        "-fx-border-color: rgba(0,0,0,0.08);" +
+                        "-fx-border-radius: 45;" +
+                        "-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.20), 10, 0, 0, 3);"
+        );
+
+        HBox tempIconBox = new HBox(iconBadge, tempLabel);
+        tempIconBox.setSpacing(15);
         tempIconBox.setAlignment(Pos.CENTER);
 
-        Label detailsLabel = new Label();
+
+
+        detailsLabel = new Label();
         detailsLabel.setStyle("-fx-font-size: 16px; -fx-text-fill: #7f8c8d;");
-        Label airLabel = new Label();
-        Label recommendationLabel = new Label();
+        airLabel = new Label();
+        recommendationLabel = new Label();
         recommendationLabel.setWrapText(true);
         recommendationLabel.setStyle("-fx-font-style: italic; -fx-text-alignment: center;");
 
@@ -139,7 +262,7 @@ public class App extends Application {
 
         // wykresy
         VBox chartCard = new VBox(15);
-        chartCard.setStyle(CARD_BG);
+        chartCard.getStyleClass().add("card");
         chartCard.setPadding(new Insets(20));
         chartCard.setMaxWidth(950);
 
@@ -151,18 +274,18 @@ public class App extends Application {
         styleButton(h7dBtn, INFO);
         chartButtons.getChildren().addAll(h24Btn, h7dBtn);
 
-        NumberAxis xAxis = new NumberAxis();
+        xAxis = new NumberAxis();
         NumberAxis yAxis = new NumberAxis();
         yAxis.setLabel("PM2.5 (µg/m³)");
-        LineChart<Number, Number> pmChart = new LineChart<>(xAxis, yAxis);
+        pmChart = new LineChart<>(xAxis, yAxis);
         pmChart.setCreateSymbols(true);
         pmChart.setPrefHeight(350);
         pmChart.setAnimated(false);
         chartCard.getChildren().addAll(chartButtons, pmChart);
 
-        // --- PANEL PORÓWNANIA ---
+        // PANEL PORÓWNANIA
         VBox compareCard = new VBox(15);
-        compareCard.setStyle(CARD_BG);
+        compareCard.getStyleClass().add("card");
         compareCard.setPadding(new Insets(20));
         compareCard.setMaxWidth(950);
 
@@ -192,12 +315,13 @@ public class App extends Application {
         styleButton(pdfBtn, "#5D4037");
         exportBox.getChildren().addAll(csvBtn, pngBtn, pdfBtn);
 
-
-
         checkButton.setOnAction(e -> {
             resultCard.setVisible(true);
             resultCard.setManaged(true);
-            handleCheck(cityField, profileBox, unitBox, tempLabel, detailsLabel, airLabel, recommendationLabel);
+
+            String city = cityField.getText();
+            cityHistoryService.addCity(city);
+            handleCheck();
         });
 
         autoRefresh = new Timeline(new KeyFrame(Duration.minutes(10), e -> {
@@ -206,22 +330,59 @@ public class App extends Application {
         autoRefresh.setCycleCount(Timeline.INDEFINITE);
         autoRefresh.play();
 
-        h24Btn.setOnAction(e -> handleHistory(cityField.getText(), 24, xAxis, pmChart, false));
-        h7dBtn.setOnAction(e -> handleHistory(cityField.getText(), 168, xAxis, pmChart, true));
+        h24Btn.setOnAction(e -> handleHistory(24, false));
+        h7dBtn.setOnAction(e -> handleHistory(168, true));
         compareBtn.setOnAction(e -> handleComparison(c1, c2, c3, unitBox.getValue(), compareTable));
         csvBtn.setOnAction(e -> handleCsvExport(primaryStage));
         pngBtn.setOnAction(e -> handlePngExport(pmChart, primaryStage));
         pdfBtn.setOnAction(e -> handlePdfExport(tempLabel.getText(), primaryStage));
 
-        mainContainer.getChildren().addAll(titleLabel, searchCard, resultCard, chartCard, compareCard, exportBox);
+        StackPane topBar = new StackPane();
+        topBar.setMaxWidth(700);
+        topBar.setPadding(new Insets(0, 10, 0, 10));
+        topBar.getChildren().add(titleLabel);
+        StackPane.setAlignment(titleLabel, Pos.CENTER);
+        topBar.getChildren().add(darkToggle);
+        StackPane.setAlignment(darkToggle, Pos.CENTER_RIGHT);
+
+
+        mainContainer.getChildren().addAll(
+                topBar,
+                searchCard,
+                resultCard,
+                chartCard,
+                compareCard,
+                exportBox
+        );
+
 
         ScrollPane scrollPane = new ScrollPane(mainContainer);
         scrollPane.setFitToWidth(true);
         scrollPane.setStyle("-fx-background-color: transparent; -fx-background: #f0f2f5;");
+        Rectangle2D vb = Screen.getPrimary().getVisualBounds();
 
-        Scene scene = new Scene(scrollPane, 1100, 950);
+        double w = vb.getWidth() * 0.80;
+        double h = vb.getHeight() * 0.85;
+
+        w = Math.max(900, w);
+        h = Math.max(700, h);
+
+        Scene scene = new Scene(scrollPane, w, h);
+        scene.getStylesheets().add(
+                getClass().getResource("/css/light.css").toExternalForm()
+        );
+        darkToggle.selectedProperty().addListener((obs, oldV, isDark) -> {
+            scene.getStylesheets().clear();
+            scene.getStylesheets().add(
+                    getClass().getResource(
+                            isDark ? "/css/dark.css" : "/css/light.css"
+                    ).toExternalForm()
+            );
+        });
         primaryStage.setTitle("Monitor Pogody i Powietrza");
         primaryStage.setScene(scene);
+        primaryStage.setResizable(false);
+        primaryStage.centerOnScreen();
         primaryStage.show();
     }
 
@@ -270,11 +431,11 @@ public class App extends Application {
         table.getStylesheets().add("data:text/css,.table-view .scroll-bar:vertical { -fx-opacity: 0; -fx-pref-width: 0; }");
     }
 
-    private void handleCheck(TextField cityF, ComboBox<String> profB, ComboBox<String> unitB, Label tL, Label dL, Label aL, Label rL) {
-        String city = cityF.getText();
-        String selectedUnit = (unitB == null) ? "Celsius (°C)" : unitB.getValue();
-        // Pobieramy profil (jeśli profB jest null, np. przy autostarcie, dajemy Standardowy)
-        String profile = (profB == null) ? "Standardowy" : profB.getValue();
+    private void handleCheck() {
+        String city = cityField.getText();
+        if (city == null || city.isBlank()) return;
+        String selectedUnit = unitBox.getValue();
+        String profile = profileBox.getValue();
 
         WeatherApiClient client = new WeatherApiClient();
 
@@ -285,93 +446,97 @@ public class App extends Application {
                 var forecast = client.fetchForecast(city);
 
                 Platform.runLater(() -> {
-                    // Ikona i temperatura
                     weatherIconView.setImage(new Image(weather.getIconUrl()));
+
                     double displayTemp = weather.getTemperatureInUnit(selectedUnit);
-                    String unitSymbol = selectedUnit.substring(selectedUnit.indexOf("(") + 1, selectedUnit.indexOf(")"));
+                    String unitSymbol = TempUnit.fromLabel(selectedUnit).symbol;
 
-                    if(tL != null) tL.setText(String.format("%.1f %s", displayTemp, unitSymbol));
-                    if(dL != null) dL.setText(String.format("Wilgotność: %d%% | Miasto: %s", weather.getHumidity(), weather.getCityName()));
+                    tempLabel.setText(String.format("%.1f %s", displayTemp, unitSymbol));
+                    detailsLabel.setText(String.format("Wilgotność: %d%% | Miasto: %s",
+                            weather.getHumidity(), weather.getCityName()));
 
-                    // --- LOGIKA PORAD I KOLORÓW (Wersja "Bardziej Ludzka") ---
                     double pm25 = air.getPm25();
-                    String advice;
-                    String color;
+                    Advice advice = buildAdvice(profile, pm25);
 
-                    boolean isSensitive = profile.equals("Alergik / Astmatyk") || profile.equals("Małe dziecko");
-                    double thresholdSafe = isSensitive ? 12.0 : 20.0;
-                    double thresholdWarning = isSensitive ? 20.0 : 35.0;
+                    maybeShowAirToast(primaryStageRef, weather.getCityName(), profile, pm25);
 
-                    if (pm25 < thresholdSafe) {
-                        advice = "🌿 Jest super! Idealna pora na spacer lub bieganie. Powietrze dla grupy '" + profile + "' jest dziś wzorowe.";
-                        color = "#2e7d32";
-                    } else if (pm25 < thresholdWarning) {
-                        if (isSensitive) {
-                            advice = "☁️ Nie jest idealnie. Jeśli jesteś wrażliwy, lepiej skróć dzisiejszy spacer.";
-                        } else {
-                            advice = "🏃 Można wychodzić, ale bez bicia rekordów. Powietrze jest takie sobie, poczujesz to przy mocniejszym treningu.";
-                        }
-                        color = "#f57f17";
-                    } else {
-                        // Alarm powyżej normy
-                        if (isSensitive) {
-                            advice = "😷 Uwaga! Fatalna jakość powietrza. Jako " + profile + " lepiej dziś odpuść wyjścia i nie otwieraj okien.";
-                        } else {
-                            advice = "🚫 Smog daje o sobie znać. Lepiej zostać w domu, wietrzenie mieszkania to teraz słaby pomysł.";
-                        }
-                        color = "#c62828";
-                    }
+                    airLabel.setText(String.format("PM2.5: %.1f | PM10: %.1f", air.getPm25(), air.getPm10()));
+                    airLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: " + advice.color() + ";");
 
-                    if(aL != null) {
-                        aL.setText(String.format("PM2.5: %.1f | PM10: %.1f", air.getPm25(), air.getPm10()));
-                        aL.setStyle("-fx-font-weight: bold; -fx-text-fill: " + color + ";");
-                    }
+                    recommendationLabel.setText(advice.text());
+                    recommendationLabel.setStyle("-fx-font-style: italic; -fx-font-weight: bold; -fx-text-fill: " + advice.color() + ";");
 
-                    if(rL != null) {
-                        rL.setText(advice);
-                        rL.setStyle("-fx-font-style: italic; -fx-font-weight: bold; -fx-text-fill: " + color + ";");
-                    }
-
-                    // Obsługa prognozy (bez zmian)
+                    // prognoza 5-dniowa
                     forecastContainer.getChildren().clear();
                     for (int i = 0; i < forecast.getForecastList().size(); i += 8) {
                         var item = forecast.getForecastList().get(i);
-                        VBox dayBox = new VBox(5); dayBox.setAlignment(Pos.CENTER);
-                        String day = Instant.ofEpochSecond(item.getDt()).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd.MM"));
+
+                        VBox dayBox = new VBox(5);
+                        dayBox.setAlignment(Pos.CENTER);
+
+                        String day = Instant.ofEpochSecond(item.getDt())
+                                .atZone(ZoneId.systemDefault())
+                                .format(DateTimeFormatter.ofPattern("dd.MM"));
+
                         Label dLabel = new Label(day);
-                        ImageView iv = new ImageView(new Image(item.getIconUrl())); iv.setFitWidth(40); iv.setFitHeight(40);
+                        ImageView iv = new ImageView(new Image(item.getIconUrl()));
+                        iv.setFitWidth(40);
+                        iv.setFitHeight(40);
+
                         Label tLabel = new Label(String.format("%.0f°C", item.getTemp()));
                         dayBox.getChildren().addAll(dLabel, iv, tLabel);
+
                         forecastContainer.getChildren().add(dayBox);
                     }
                 });
                 return null;
             }
         };
+
+        combinedTask.setOnFailed(e ->
+                Platform.runLater(() -> showError(combinedTask.getException()))
+        );
+
         new Thread(combinedTask).start();
     }
 
-    private void handleHistory(String city, int hours, NumberAxis xAxis, LineChart<Number, Number> chart, boolean is7d) {
+
+    private void handleHistory(int hours, boolean is7d) {
+        String city = cityField.getText();
+        if (city == null || city.isBlank()) return;
+
         WeatherApiClient client = new WeatherApiClient();
+
         Task<Void> task = new Task<>() {
             @Override protected Void call() throws Exception {
                 var w = client.fetchCurrentWeather(city);
+
                 long now = Instant.now().getEpochSecond();
                 long start = now - (hours * 3600L);
-                List<airmonitor.Model.AirQualityPoint> points = client.fetchAirQualityHistory(w.getLat(), w.getLon(), start, now);
+
+                List<AirQualityPoint> points =
+                        client.fetchAirQualityHistory(w.getLat(), w.getLon(), start, now);
+
                 Platform.runLater(() -> {
                     if (is7d) {
-                        lastHistory7d = points; lastHistoryCity = w.getCityName();
-                        drawPm25ChartDailyAverage(xAxis, chart, points, "Trend 7-dniowy");
+                        lastHistory7d = points;
+                        lastHistoryCity = w.getCityName();
+                        drawPm25ChartDailyAverage(xAxis, pmChart, points, "Trend 7-dniowy");
                     } else {
-                        drawPm25ChartSamples(xAxis, chart, points, "Ostatnie 24 godziny");
+                        drawPm25ChartSamples(xAxis, pmChart, points, "Ostatnie 24 godziny");
                     }
                 });
                 return null;
             }
         };
+
+        task.setOnFailed(e ->
+                Platform.runLater(() -> showError(task.getException()))
+        );
+
         new Thread(task).start();
     }
+
 
     private void handleComparison(TextField c1, TextField c2, TextField c3, String unit, TableView<ComparisonRow> table) {
         List<String> cities = new ArrayList<>();
@@ -380,7 +545,7 @@ public class App extends Application {
         if(!c3.getText().isBlank()) cities.add(c3.getText().trim());
         if (cities.size() < 2) return;
 
-        String unitSymbol = unit.substring(unit.indexOf("(") + 1, unit.indexOf(")"));
+        String unitSymbol = TempUnit.fromLabel(unit).symbol;
         colTemp.setText("Temp (" + unitSymbol + ")");
 
         WeatherApiClient client = new WeatherApiClient();
@@ -464,6 +629,109 @@ public class App extends Application {
         File f = fc.showSaveDialog(s);
         if(f != null) { try { ExportService.exportWeeklyPdfReport(lastHistoryCity, lastHistory7d, temp, f); } catch(Exception ex) { ex.printStackTrace(); } }
     }
+
+    private void maybeShowAirToast(Stage owner, String city, String profile, double pm25) {
+        Thresholds t = thresholdsFor(profile);
+        double warning = t.warning();
+        double danger  = t.danger();
+
+        String level;
+        String title;
+        String msg;
+        if (pm25 >= danger) {
+            level = "error";
+            title = "❌ ALERT: bardzo zła jakość powietrza";
+            msg = "Miasto: " + city +
+                    "\nPM2.5: " + String.format("%.1f", pm25) + " µg/m³" +
+                    "\nSprawdź zalecenia w aplikacji.";
+        } else if (pm25 >= warning) {
+            level = "warn";
+            title = "⚠️ Uwaga: podwyższone PM2.5";
+            msg = "Miasto: " + city +
+                    "\nPM2.5: " + String.format("%.1f", pm25) + " µg/m³";
+        } else {
+            return;
+        }
+
+        String key = city.toLowerCase() + "|" + profile + "|" + (pm25 >= danger ? "danger" : "warning");
+        if (key.equals(lastToastKey)) return;
+        lastToastKey = key;
+
+        showToast(owner, title, msg, level);
+    }
+
+    private void showToast(Stage owner, String title, String message, String level) {
+        if (toastPopup == null) toastPopup = new Popup();
+        toastPopup.getContent().clear();
+
+        Label t = new Label(title);
+        t.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
+
+        Label m = new Label(message);
+        m.setWrapText(true);
+        m.setMaxWidth(320);
+
+        VBox box = new VBox(6, t, m);
+        box.setPadding(new Insets(12));
+        box.setMaxWidth(340);
+
+        String bg;
+        String border;
+        String text;
+
+        switch (level) {
+            case "error" -> { bg = "#3b1f1f"; border = "#ff6b6b"; text = "#ffecec"; }
+            case "warn"  -> { bg = "#3a2f14"; border = "#ffd166"; text = "#fff3d6"; }
+            default      -> { bg = "#1f2a3b"; border = "#6aa9ff"; text = "#eaf2ff"; }
+        }
+
+        box.setStyle(
+                "-fx-background-color: " + bg + ";" +
+                        "-fx-background-radius: 12;" +
+                        "-fx-border-color: " + border + ";" +
+                        "-fx-border-radius: 12;" +
+                        "-fx-border-width: 1;" +
+                        "-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.35), 12, 0, 0, 6);"
+        );
+
+        t.setStyle(t.getStyle() + "-fx-text-fill: " + text + ";");
+        m.setStyle("-fx-text-fill: " + text + ";");
+
+        toastPopup.getContent().add(box);
+        toastPopup.setAutoFix(false);
+        toastPopup.setAutoHide(false);
+        toastPopup.setHideOnEscape(true);
+
+        toastPopup.show(owner);
+
+        double x = owner.getX() + owner.getWidth() - 360;
+        double y = owner.getY() + owner.getHeight() - 140;
+        toastPopup.setX(Math.max(owner.getX() + 10, x));
+        toastPopup.setY(Math.max(owner.getY() + 10, y));
+        ChangeListener<Number> reposition = (obs, o, n) -> {
+            toastPopup.setX(owner.getX() + owner.getWidth() - 360);
+            toastPopup.setY(owner.getY() + owner.getHeight() - 140);
+        };
+
+        owner.xProperty().addListener(reposition);
+        owner.yProperty().addListener(reposition);
+        owner.widthProperty().addListener(reposition);
+        owner.heightProperty().addListener(reposition);
+
+
+        Timeline hide = new Timeline(new KeyFrame(Duration.seconds(10), e -> toastPopup.hide()));
+        hide.play();
+    }
+    private void showError(Throwable ex) {
+        ex.printStackTrace();
+        Alert a = new Alert(Alert.AlertType.ERROR);
+        a.setTitle("Błąd");
+        a.setHeaderText("Nie udało się pobrać danych");
+        a.setContentText(ex.getMessage() != null ? ex.getMessage() : ex.toString());
+        a.showAndWait();
+    }
+
+
 
     public static void main(String[] args) { launch(args); }
 }
